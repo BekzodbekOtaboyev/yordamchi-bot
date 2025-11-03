@@ -1,206 +1,232 @@
 import os
 import json
-import logging
-from datetime import datetime, time
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import CommandStart
+import asyncio
+from aiogram import Bot, Dispatcher, types
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import StatesGroup, State
-from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.filters import CommandStart
 from aiohttp import web
 from dotenv import load_dotenv
-import asyncio
 
+# --- Muhit o‘zgaruvchilarni yuklash ---
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
+RENDER_URL = os.getenv("RENDER_URL")
 
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(storage=MemoryStorage())
+dp = Dispatcher()
 
-logging.basicConfig(level=logging.INFO)
+# --- Ma'lumotlar fayli ---
+DATA_FILE = "data.json"
+if not os.path.exists(DATA_FILE):
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump({}, f, ensure_ascii=False, indent=2)
 
-DB_FILE = "db.json"
-
-# --- FSM holatlar ---
+# --- Holatlar ---
 class Form(StatesGroup):
     message = State()
     audience = State()
-    online_mode = State()
-    weekday = State()
-    start_hour = State()
-    end_hour = State()
+    mode = State()
+    days = State()
+    start_time = State()
+    end_time = State()
+    manual_start = State()
+    manual_end = State()
 
-# --- bazani yuklash va saqlash ---
-def load_db():
-    if os.path.exists(DB_FILE):
-        with open(DB_FILE, "r") as f:
-            return json.load(f)
-    return {"users": [], "messages": []}
+# --- Tugmalar ---
+def days_keyboard():
+    kb = [
+        [KeyboardButton(text="Dushanba"), KeyboardButton(text="Seshanba")],
+        [KeyboardButton(text="Chorshanba"), KeyboardButton(text="Payshanba")],
+        [KeyboardButton(text="Juma"), KeyboardButton(text="Shanba")],
+        [KeyboardButton(text="Yakshanba"), KeyboardButton(text="Har kuni ✅")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
-def save_db(db):
-    with open(DB_FILE, "w") as f:
-        json.dump(db, f, indent=4)
+def time_keyboard():
+    rows = []
+    hours = [f"{str(h).zfill(2)}:00" for h in range(1, 24)]
+    for i in range(0, len(hours), 3):
+        rows.append([KeyboardButton(text=t) for t in hours[i:i+3]])
+    rows.append([KeyboardButton(text="Qo‘lda kiritish")])
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
-# --- /start ---
+def edit_keyboard():
+    kb = [
+        [KeyboardButton(text="📝 Xabarni o‘zgartirish")],
+        [KeyboardButton(text="🕐 Vaqtni o‘zgartirish")],
+        [KeyboardButton(text="📅 Kunlarni o‘zgartirish")],
+        [KeyboardButton(text="❌ Bekor qilish")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
+
+# --- /start komandasi ---
 @dp.message(CommandStart())
-async def start(message: types.Message, state: FSMContext):
-    await state.set_state(Form.message)
-    await message.answer("Salom! 👋\nIltimos, yubormoqchi bo‘lgan xabaringizni yozing (2000 belgigacha):")
+async def start_cmd(message: types.Message, state: FSMContext):
+    with open(DATA_FILE, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    user_id = str(message.from_user.id)
 
-# --- xabar yozish ---
+    if user_id in data:
+        info = data[user_id]
+        await message.answer(
+            f"✅ Sizda avvaldan sozlamalar mavjud:\n\n"
+            f"📨 Xabar: {info['message']}\n"
+            f"🎯 Kimlarga: {info['audience']}\n"
+            f"⚙️ Rejim: {info['mode']}\n"
+            f"📅 Kun: {info['days']}\n"
+            f"🕓 Vaqt: {info['start_time']} - {info['end_time']}\n\n"
+            "Quyidagilardan birini tanlang 👇",
+            reply_markup=edit_keyboard()
+        )
+    else:
+        await message.answer(
+            "👋 Salom!\nMen sizga yozgan birinchi foydalanuvchilarga avtomatik javob yuboruvchi botman.\n\n"
+            "Avvalo, yuboriladigan xabaringizni yozing:"
+        )
+        await state.set_state(Form.message)
+
+# --- Ma’lumot yig‘ish bosqichlari ---
 @dp.message(Form.message)
 async def get_message(message: types.Message, state: FSMContext):
-    if len(message.text) > 2000:
-        return await message.answer("Xabaringiz juda uzun! Maksimum 2000 belgi.")
-    await state.update_data(message=message.text)
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("✅ Faqat yangi yozganlarga", callback_data="new")],
-        [InlineKeyboardButton("❇️ Barchaga", callback_data="all")]
-    ])
-    await message.answer("Kimlarga yuborilsin?", reply_markup=keyboard)
+    await state.update_data(message_text=message.text)
+    kb = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Faqat yangi yozganlarga")],
+            [KeyboardButton(text="Barchaga (eski + yangi)")]
+        ],
+        resize_keyboard=True
+    )
+    await message.answer("Xabar kimlarga yuborilsin?", reply_markup=kb)
     await state.set_state(Form.audience)
 
-# --- kimlarga yuborish ---
-@dp.callback_query(Form.audience)
-async def choose_audience(call: types.CallbackQuery, state: FSMContext):
-    await state.update_data(audience=call.data)
+@dp.message(Form.audience)
+async def get_audience(message: types.Message, state: FSMContext):
+    await state.update_data(audience=message.text)
+    kb = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Faqat online paytimda")],
+            [KeyboardButton(text="Har doim ishlasin ✅")]
+        ],
+        resize_keyboard=True
+    )
+    await message.answer("Bot qachon ishlasin?", reply_markup=kb)
+    await state.set_state(Form.mode)
 
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("🟢 Faqat online paytimda", callback_data="online")],
-        [InlineKeyboardButton("🔵 24 soat (doimiy)", callback_data="always")]
-    ])
-    await call.message.edit_text("Bot faqat online paytingizda ishlasinmi yoki doimiy bo‘lsin?", reply_markup=keyboard)
-    await state.set_state(Form.online_mode)
+@dp.message(Form.mode)
+async def get_mode(message: types.Message, state: FSMContext):
+    await state.update_data(mode=message.text)
+    await message.answer("🗓 Haftalik kunlardan birini tanlang:", reply_markup=days_keyboard())
+    await state.set_state(Form.days)
 
-# --- online/doimiy ---
-@dp.callback_query(Form.online_mode)
-async def choose_mode(call: types.CallbackQuery, state: FSMContext):
-    await state.update_data(online_mode=call.data)
+@dp.message(Form.days)
+async def get_days(message: types.Message, state: FSMContext):
+    await state.update_data(days=message.text)
+    await message.answer("🕐 Boshlanish vaqtini tanlang:", reply_markup=time_keyboard())
+    await state.set_state(Form.start_time)
 
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(str(i), callback_data=str(i)) for i in range(1,8)],
-        [InlineKeyboardButton("📅 Har kuni", callback_data="everyday")]
-    ])
-    await call.message.edit_text("Hafta kunlarini tanlang:", reply_markup=keyboard)
-    await state.set_state(Form.weekday)
+@dp.message(Form.start_time)
+async def get_start_time(message: types.Message, state: FSMContext):
+    if message.text == "Qo‘lda kiritish":
+        await message.answer("⏰ Masalan: 09:00")
+        await state.set_state(Form.manual_start)
+    else:
+        await state.update_data(start_time=message.text)
+        await message.answer("⏰ Tugash vaqtini tanlang:", reply_markup=time_keyboard())
+        await state.set_state(Form.end_time)
 
-# --- hafta kunlari ---
-@dp.callback_query(Form.weekday)
-async def choose_weekday(call: types.CallbackQuery, state: FSMContext):
-    await state.update_data(weekday=call.data)
+@dp.message(Form.manual_start)
+async def manual_start(message: types.Message, state: FSMContext):
+    await state.update_data(start_time=message.text)
+    await message.answer("⏰ Tugash vaqtini tanlang:", reply_markup=time_keyboard())
+    await state.set_state(Form.end_time)
 
-    # Soat boshlanishi
-    hours_keyboard = [[InlineKeyboardButton(f"{h:02d}:00", callback_data=f"{h:02d}")] for h in range(0,24)]
-    hours_keyboard.append([InlineKeyboardButton("⌨️ Qo‘lda kiritish", callback_data="manual_start")])
-    keyboard = InlineKeyboardMarkup(inline_keyboard=hours_keyboard)
-    await call.message.edit_text("Xabar yuborishni boshlash soatini tanlang:", reply_markup=keyboard)
-    await state.set_state(Form.start_hour)
+@dp.message(Form.end_time)
+async def get_end_time(message: types.Message, state: FSMContext):
+    if message.text == "Qo‘lda kiritish":
+        await message.answer("⏰ Masalan: 18:00")
+        await state.set_state(Form.manual_end)
+    else:
+        await finalize_user_data(message, state)
 
-# --- boshlanish soati ---
-@dp.callback_query(Form.start_hour)
-async def start_hour_cb(call: types.CallbackQuery, state: FSMContext):
-    if call.data == "manual_start":
-        await call.message.edit_text("Iltimos, boshlanish vaqtini (HH:MM) kiriting:")
-        return
-    await state.update_data(start_hour=call.data)
-    await ask_end_hour(call.message, state)
+@dp.message(Form.manual_end)
+async def manual_end(message: types.Message, state: FSMContext):
+    await finalize_user_data(message, state)
 
-@dp.message(Form.start_hour)
-async def start_hour_manual(message: types.Message, state: FSMContext):
-    await state.update_data(start_hour=message.text)
-    await ask_end_hour(message, state)
-
-# --- tugash soati ---
-async def ask_end_hour(message, state: FSMContext):
-    hours_keyboard = [[InlineKeyboardButton(f"{h:02d}:00", callback_data=f"{h:02d}")] for h in range(0,24)]
-    hours_keyboard.append([InlineKeyboardButton("⌨️ Qo‘lda kiritish", callback_data="manual_end")])
-    keyboard = InlineKeyboardMarkup(inline_keyboard=hours_keyboard)
-    await message.answer("Xabar yuborishni tugash soatini tanlang:", reply_markup=keyboard)
-    await state.set_state(Form.end_hour)
-
-@dp.callback_query(Form.end_hour)
-async def end_hour_cb(call: types.CallbackQuery, state: FSMContext):
-    if call.data == "manual_end":
-        await call.message.edit_text("Iltimos, tugash vaqtini (HH:MM) kiriting:")
-        return
-    await state.update_data(end_hour=call.data)
-    await save_all(call.message, state)
-
-@dp.message(Form.end_hour)
-async def end_hour_manual(message: types.Message, state: FSMContext):
-    await state.update_data(end_hour=message.text)
-    await save_all(message, state)
-
-# --- saqlash va yakun ---
-async def save_all(message, state):
+async def finalize_user_data(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    db = load_db()
+    user_id = str(message.from_user.id)
 
-    # foydalanuvchi saqlash
-    if message.from_user.id not in db["users"]:
-        db["users"].append({"user_id": message.from_user.id, "sent_messages":[]})
+    with open(DATA_FILE, "r", encoding="utf-8") as f:
+        db = json.load(f)
 
-    # xabar saqlash
-    msg_id = len(db["messages"]) + 1
-    db["messages"].append({
-        "id": msg_id,
-        "user_id": message.from_user.id,
-        "message": data['message'],
-        "audience": data['audience'],
-        "online_mode": data['online_mode'],
-        "weekday": data['weekday'],
-        "start_hour": data['start_hour'],
-        "end_hour": data['end_hour']
-    })
-    save_db(db)
+    db[user_id] = {
+        "message": data["message_text"],
+        "audience": data["audience"],
+        "mode": data["mode"],
+        "days": data["days"],
+        "start_time": data["start_time"],
+        "end_time": message.text,
+        "sent_users": []
+    }
 
-    await message.answer("✅ Ma’lumotlar saqlandi, rahmat!")
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(db, f, ensure_ascii=False, indent=2)
+
+    await message.answer("✅ Sozlamalar saqlandi!", reply_markup=types.ReplyKeyboardRemove())
     await state.clear()
 
-# --- admin yuborish ---
-async def send_messages():
-    while True:
-        db = load_db()
-        now = datetime.now()
-        weekday = now.isoweekday()  # 1-7
-        current_hour = now.hour
+# --- Sozlamalarni tahrirlash ---
+@dp.message(lambda m: m.text in ["📝 Xabarni o‘zgartirish", "🕐 Vaqtni o‘zgartirish", "📅 Kunlarni o‘zgartirish"])
+async def edit_settings(message: types.Message, state: FSMContext):
+    user_id = str(message.from_user.id)
+    with open(DATA_FILE, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if user_id not in data:
+        await message.answer("⚙️ Avval /start orqali sozlamalarni yarating.")
+        return
 
-        for msg in db["messages"]:
-            # Doimiy xabar (24 soat) yoki kun va vaqtga mos
-            send_flag = False
-            if msg["online_mode"] == "always":
-                send_flag = True
-            else:
-                # Hafta kuni tekshirish
-                if msg["weekday"] == "everyday" or int(msg["weekday"]) == weekday:
-                    start = int(msg["start_hour"].split(":")[0]) if ":" in msg["start_hour"] else int(msg["start_hour"])
-                    end = int(msg["end_hour"].split(":")[0]) if ":" in msg["end_hour"] else int(msg["end_hour"])
-                    if start <= current_hour <= end:
-                        send_flag = True
+    if message.text == "📝 Xabarni o‘zgartirish":
+        await message.answer("Yangi avtomatik xabarni yuboring:")
+        await state.set_state(Form.message)
+    elif message.text == "🕐 Vaqtni o‘zgartirish":
+        await message.answer("🕐 Boshlanish vaqtini kiriting:", reply_markup=time_keyboard())
+        await state.set_state(Form.start_time)
+    elif message.text == "📅 Kunlarni o‘zgartirish":
+        await message.answer("📅 Haftalik kunni tanlang:", reply_markup=days_keyboard())
+        await state.set_state(Form.days)
 
-            if send_flag:
-                # userni topish
-                user_record = next((u for u in db["users"] if u["user_id"]==msg["user_id"]), None)
-                if user_record and msg["id"] not in user_record["sent_messages"]:
-                    try:
-                        await bot.send_message(msg["user_id"], msg["message"])
-                        user_record["sent_messages"].append(msg["id"])
-                        save_db(db)
-                    except Exception as e:
-                        print(f"Xabar yuborilmadi {msg['user_id']}: {e}")
-        await asyncio.sleep(60)  # har 1 daqiqa tekshirish
+# --- Avtomatik javob berish ---
+@dp.message()
+async def auto_reply(message: types.Message):
+    user_id = str(message.from_user.id)
+    with open(DATA_FILE, "r", encoding="utf-8") as f:
+        data = json.load(f)
 
-# --- webhook ---
-async def on_startup(app):
-    asyncio.create_task(send_messages())
-    webhook_url = "https://YOUR-RENDER-APP.onrender.com/webhook"
+    # Agar sozlamalar bo'lmasa — chiqib ketadi
+    if user_id not in data:
+        return
+
+    info = data[user_id]
+    reply_text = info["message"]
+    sent_users = info.get("sent_users", [])
+
+    target_id = str(message.from_user.id)
+    if target_id not in sent_users:
+        await bot.send_message(chat_id=target_id, text=reply_text)
+        sent_users.append(target_id)
+        info["sent_users"] = sent_users
+        data[user_id] = info
+
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+# --- Webhook funksiyalari ---
+async def on_startup():
+    webhook_url = f"{RENDER_URL}/webhook"
     await bot.set_webhook(webhook_url)
-
-async def on_shutdown(app):
-    await bot.delete_webhook()
+    print("✅ Webhook o‘rnatildi:", webhook_url)
 
 async def handle_webhook(request):
     data = await request.json()
@@ -208,12 +234,19 @@ async def handle_webhook(request):
     await dp.feed_update(bot, update)
     return web.Response()
 
-def main():
-    app = web.Application()
-    app.router.add_post("/webhook", handle_webhook)
-    app.on_startup.append(on_startup)
-    app.on_shutdown.append(on_shutdown)
-    web.run_app(app, port=int(os.environ.get("PORT", 8080)))
+app = web.Application()
+app.router.add_post("/webhook", handle_webhook)
+
+async def main():
+    await on_startup()
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.getenv("PORT", 8080))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print("🤖 Bot ishga tushdi!")
+    while True:
+        await asyncio.sleep(3600)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
