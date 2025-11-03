@@ -1,334 +1,257 @@
-# import asyncio
-# from aiogram import Bot, Dispatcher, types, F
-# from aiogram.filters import CommandStart
-# from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
-# from aiogram.fsm.state import StatesGroup, State
-# from aiogram.fsm.context import FSMContext
-# from aiogram.fsm.storage.memory import MemoryStorage
+"""
+Telegram Bot (Render uchun, JSON saqlash bilan)
+Muallif: ChatGPT GPT-5
 
-# BOT_TOKEN = "8448499638:AAFFqtNvsU285I_dfvWCv_XpFxA_PSVxZr8"  # ← bu yerga tokenni yozing
+Xususiyatlar:
+✅ /start — foydalanuvchidan ketma-ket so‘rovlar
+✅ Sozlamalar (kimlarga, qachon, kunlar, matn)
+✅ Auto-reply va kunlik scheduler
+✅ Ma’lumotlar `data.json` faylda saqlanadi (SQLite o‘rniga)
+"""
 
-# bot = Bot(token=BOT_TOKEN)
-# dp = Dispatcher(storage=MemoryStorage())
-
-
-# # --- Holatlar (FSM) ---
-# class UserForm(StatesGroup):
-#     target_choice = State()
-#     active_time_choice = State()
-#     user_message = State()
-#     week_days = State()
-#     start_time = State()
-#     end_time = State()
-#     manual_time = State()
-
-
-# # --- /start buyrug‘i ---
-# @dp.message(CommandStart())
-# async def start_cmd(message: types.Message, state: FSMContext):
-#     await state.clear()
-
-#     choice_kb = ReplyKeyboardMarkup(
-#         keyboard=[
-#             [KeyboardButton(text="🆕 Faqat yangi yozganlarga")],
-#             [KeyboardButton(text="🌍 Barchaga yuborilsin")],
-#         ],
-#         resize_keyboard=True
-#     )
-
-#     await message.answer(
-#         "👋 Salom!\n\n"
-#         "Xabarni kimlarga yuborishni xohlaysiz?",
-#         reply_markup=choice_kb
-#     )
-#     await state.set_state(UserForm.target_choice)
-
-
-# # --- 1. Kimlarga yuborish tanlovi ---
-# @dp.message(UserForm.target_choice)
-# async def choose_target(message: types.Message, state: FSMContext):
-#     if message.text not in ["🆕 Faqat yangi yozganlarga", "🌍 Barchaga yuborilsin"]:
-#         await message.answer("❗ Iltimos, tugmalardan birini tanlang.")
-#         return
-
-#     await state.update_data(target_group=message.text)
-
-#     online_kb = ReplyKeyboardMarkup(
-#         keyboard=[
-#             [KeyboardButton(text="💻 Faqat onlayn paytimda")],
-#             [KeyboardButton(text="⏱ Har doim ishlasin")],
-#         ],
-#         resize_keyboard=True
-#     )
-
-#     await message.answer(
-#         "⚙️ Bot qachon ishlasin?",
-#         reply_markup=online_kb
-#     )
-#     await state.set_state(UserForm.active_time_choice)
-
-
-# # --- 2. Ishlash vaqti (onlayn / har doim) ---
-# @dp.message(UserForm.active_time_choice)
-# async def choose_active_time(message: types.Message, state: FSMContext):
-#     if message.text not in ["💻 Faqat onlayn paytimda", "⏱ Har doim ishlasin"]:
-#         await message.answer("❗ Tugmalardan birini tanlang.")
-#         return
-
-#     await state.update_data(active_time=message.text)
-
-#     await message.answer(
-#         "✉️ Endi, o‘zingizning maxsus xabaringizni yozing (maksimum 2000 belgi):",
-#         reply_markup=types.ReplyKeyboardRemove()
-#     )
-#     await state.set_state(UserForm.user_message)
-
-
-# # --- 3. Foydalanuvchi xabari ---
-# @dp.message(UserForm.user_message)
-# async def get_user_message(message: types.Message, state: FSMContext):
-#     text = message.text.strip()
-#     if len(text) > 2000:
-#         await message.answer("❗ Xabaringiz juda uzun, 2000 belgidan oshmasin.")
-#         return
-
-#     await state.update_data(user_message=text)
-
-#     # hafta kunlari tugmalari
-#     days_kb = ReplyKeyboardMarkup(
-#         keyboard=[
-#             [KeyboardButton(text="Dushanba"), KeyboardButton(text="Seshanba")],
-#             [KeyboardButton(text="Chorshanba"), KeyboardButton(text="Payshanba")],
-#             [KeyboardButton(text="Juma"), KeyboardButton(text="Shanba")],
-#             [KeyboardButton(text="Yakshanba")],
-#             [KeyboardButton(text="Har kuni ✅")],
-#         ],
-#         resize_keyboard=True
-#     )
-
-#     await message.answer(
-#         "📅 Haftaning qaysi kunlarida xabar yuborilsin?",
-#         reply_markup=days_kb
-#     )
-#     await state.set_state(UserForm.week_days)
-
-
-# # --- 4. Kun tanlash ---
-# @dp.message(UserForm.week_days)
-# async def choose_days(message: types.Message, state: FSMContext):
-#     day = message.text.strip()
-#     valid_days = [
-#         "Dushanba", "Seshanba", "Chorshanba", "Payshanba",
-#         "Juma", "Shanba", "Yakshanba", "Har kuni ✅"
-#     ]
-#     if day not in valid_days:
-#         await message.answer("❗ Iltimos, berilgan tugmalardan birini tanlang.")
-#         return
-
-#     await state.update_data(selected_days=day)
-
-#     # soatlar ro‘yxati
-#     hours = [f"{str(h).zfill(2)}:00" for h in range(1, 24)]
-#     hour_buttons = [[KeyboardButton(text=h)] for h in hours]
-#     hour_buttons.append([KeyboardButton(text="🕓 Qo‘lda kiritaman")])
-#     hours_kb = ReplyKeyboardMarkup(keyboard=hour_buttons, resize_keyboard=True)
-
-#     await message.answer(
-#         "🕐 Xabar yuborilishi qaysi vaqtdan boshlansin?",
-#         reply_markup=hours_kb
-#     )
-#     await state.set_state(UserForm.start_time)
-
-
-# # --- 5. Boshlanish soati ---
-# @dp.message(UserForm.start_time)
-# async def choose_start_time(message: types.Message, state: FSMContext):
-#     time = message.text.strip()
-#     if time == "🕓 Qo‘lda kiritaman":
-#         await message.answer("⏰ Iltimos, vaqtni qo‘lda kiriting (masalan: 09:30):",
-#                              reply_markup=types.ReplyKeyboardRemove())
-#         await state.set_state(UserForm.manual_time)
-#         return
-
-#     if not time.endswith(":00") or not time[:2].isdigit():
-#         await message.answer("❗ Iltimos, soatni to‘g‘ri tanlang yoki '🕓 Qo‘lda kiritaman' tugmasini bosing.")
-#         return
-
-#     await state.update_data(start_time=time)
-
-#     # tugash vaqt tugmalari
-#     hours = [f"{str(h).zfill(2)}:00" for h in range(1, 24)]
-#     hour_buttons = [[KeyboardButton(text=h)] for h in hours]
-#     hour_buttons.append([KeyboardButton(text="🕓 Qo‘lda kiritaman")])
-#     hours_kb = ReplyKeyboardMarkup(keyboard=hour_buttons, resize_keyboard=True)
-
-#     await message.answer("🕛 Endi xabar yuborilishi qaysi vaqtda tugasin?", reply_markup=hours_kb)
-#     await state.set_state(UserForm.end_time)
-
-
-# # --- 6. Tugash soati ---
-# @dp.message(UserForm.end_time)
-# async def choose_end_time(message: types.Message, state: FSMContext):
-#     time = message.text.strip()
-#     if time == "🕓 Qo‘lda kiritaman":
-#         await message.answer("⏰ Iltimos, vaqtni qo‘lda kiriting (masalan: 19:00):",
-#                              reply_markup=types.ReplyKeyboardRemove())
-#         await state.set_state(UserForm.manual_time)
-#         return
-
-#     await state.update_data(end_time=time)
-
-#     data = await state.get_data()
-#     user_id = message.from_user.id
-
-#     summary = (
-#         "✅ Ma’lumotlaringiz saqlandi!\n\n"
-#         f"👤 ID: {user_id}\n"
-#         f"📩 Xabar: {data.get('user_message')}\n"
-#         f"🎯 Kimlarga: {data.get('target_group')}\n"
-#         f"⚙️ Ishlash: {data.get('active_time')}\n"
-#         f"📅 Kunlar: {data.get('selected_days')}\n"
-#         f"🕒 Boshlanish: {data.get('start_time')}\n"
-#         f"🕓 Tugash: {data.get('end_time')}\n\n"
-#         "Hammasi tayyor ✅"
-#     )
-
-#     await message.answer(summary, reply_markup=types.ReplyKeyboardRemove())
-#     await state.clear()
-
-
-# # --- 7. Qo‘lda vaqt kiritish ---
-# @dp.message(UserForm.manual_time)
-# async def get_manual_time(message: types.Message, state: FSMContext):
-#     text = message.text.strip()
-#     if ":" not in text:
-#         await message.answer("❗ Noto‘g‘ri format. Masalan: 10:30")
-#         return
-
-#     data = await state.get_data()
-
-#     if "start_time" not in data:
-#         await state.update_data(start_time=text)
-#         await message.answer("🕛 Endi tugash vaqtini kiriting (masalan: 19:00):")
-#     else:
-#         await state.update_data(end_time=text)
-#         data = await state.get_data()
-#         user_id = message.from_user.id
-
-#         summary = (
-#             "✅ Ma’lumotlaringiz saqlandi!\n\n"
-#             f"👤 ID: {user_id}\n"
-#             f"📩 Xabar: {data.get('user_message')}\n"
-#             f"🎯 Kimlarga: {data.get('target_group')}\n"
-#             f"⚙️ Ishlash: {data.get('active_time')}\n"
-#             f"📅 Kunlar: {data.get('selected_days')}\n"
-#             f"🕒 Boshlanish: {data.get('start_time')}\n"
-#             f"🕓 Tugash: {data.get('end_time')}\n\n"
-#             "Hammasi tayyor ✅"
-#         )
-
-#         await message.answer(summary)
-#         await state.clear()
-
-
-# # --- Ishga tushirish ---
-# async def main():
-#     print("🤖 DLS REKLAMA BOT ishga tushdi...")
-#     await dp.start_polling(bot)
-
-
-# if __name__ == "__main__":
-#     asyncio.run(main())
-import asyncio
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from aiogram.filters import Command
-from datetime import datetime, time
 import os
-from dotenv import load_dotenv
+import json
+import logging
+from datetime import datetime, time
+from typing import Dict, Any, List, Optional
 
-# 🔐 Tokenni o‘qish
-load_dotenv()
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    ConversationHandler,
+    ContextTypes,
+    filters,
+)
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+TOKEN = os.getenv("TELEGRAM_TOKEN", "PASTE_YOUR_TOKEN_HERE")
+DATA_FILE = "data.json"
+MAX_MESSAGE_LENGTH = 2000
 
-# 🕓 Foydalanuvchi kiritgan vaqtlar
-user_times = {}
+(RECIPIENTS, MODE, MESSAGE_TEXT, DAYS, START_TIME, END_TIME, CONFIRM) = range(7)
 
-# 🏠 /start buyrug‘i
-@dp.message(Command("start"))
-async def start_cmd(message: types.Message):
-    markup = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💬 Avtomatik javob yoqish", callback_data="auto_reply")],
-        [InlineKeyboardButton(text="📅 Belgilangan vaqt sozlash", callback_data="set_time")]
-    ])
-    await message.answer(
-        "👋 Salom! Men sizga yordam beruvchi avtomatik botman.\n"
-        "Quyidagi menyudan tanlang:", reply_markup=markup
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# --- JSON saqlash funksiyalari ---
+def load_data() -> Dict[str, Any]:
+    if not os.path.exists(DATA_FILE):
+        return {"users": {}, "settings": {}}
+    with open(DATA_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_data(data: Dict[str, Any]):
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def save_user(user_id: int, username: str, first_name: str, last_name: str):
+    data = load_data()
+    if str(user_id) not in data["users"]:
+        data["users"][str(user_id)] = {
+            "username": username,
+            "first_name": first_name,
+            "last_name": last_name,
+            "first_seen": datetime.utcnow().isoformat(),
+        }
+        save_data(data)
+
+
+def get_all_users() -> List[int]:
+    data = load_data()
+    return [int(uid) for uid in data["users"].keys()]
+
+
+def get_new_users(since: Optional[str]) -> List[int]:
+    data = load_data()
+    if not since:
+        return [int(uid) for uid in data["users"].keys()]
+    since_dt = datetime.fromisoformat(since)
+    return [
+        int(uid)
+        for uid, u in data["users"].items()
+        if datetime.fromisoformat(u["first_seen"]) > since_dt
+    ]
+
+
+def save_settings(owner_id: int, settings: Dict[str, Any]):
+    data = load_data()
+    data["settings"][str(owner_id)] = settings
+    save_data(data)
+
+
+def load_settings(owner_id: int) -> Optional[Dict[str, Any]]:
+    data = load_data()
+    return data["settings"].get(str(owner_id))
+
+
+# --- Foydalanuvchidan ma’lumot olish ---
+def parse_time(hhmm: str) -> Optional[time]:
+    try:
+        hh, mm = map(int, hhmm.split(":"))
+        return time(hour=hh, minute=mm)
+    except Exception:
+        return None
+
+
+def days_from_text(txt: str) -> List[str]:
+    mapping = {
+        "1": "Mon",
+        "2": "Tue",
+        "3": "Wed",
+        "4": "Thu",
+        "5": "Fri",
+        "6": "Sat",
+        "7": "Sun",
+        "dushanba": "Mon",
+        "seshanba": "Tue",
+        "chorshanba": "Wed",
+        "payshanba": "Thu",
+        "juma": "Fri",
+        "shanba": "Sat",
+        "yakshanba": "Sun",
+    }
+    parts = [p.strip().lower() for p in txt.split(",")]
+    return [mapping.get(p, p.title()[:3]) for p in parts if p]
+
+
+# --- Bot conversation ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not user:
+        return ConversationHandler.END
+    save_user(user.id, user.username, user.first_name, user.last_name)
+    keyboard = [["Yangi yozganlarga"], ["Hammaga"]]
+    await update.message.reply_text(
+        "Salom! Xabar kimlarga yuborilsin?",
+        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True),
+    )
+    context.user_data["new_settings"] = {}
+    return RECIPIENTS
+
+
+async def recipients_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.lower()
+    context.user_data["new_settings"]["recipients"] = (
+        "yangi" if "yangi" in text else "hammaga"
+    )
+    keyboard = [["Faqat onlayn"], ["Har doim"]]
+    await update.message.reply_text(
+        "Bot qachon ishlaydi?", reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
+    )
+    return MODE
+
+
+async def mode_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.lower()
+    context.user_data["new_settings"]["mode"] = "onlayn" if "onlayn" in text else "har doim"
+    await update.message.reply_text("Xabar matnini yuboring (2000 belgigacha):")
+    return MESSAGE_TEXT
+
+
+async def message_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    if len(text) > MAX_MESSAGE_LENGTH:
+        await update.message.reply_text("Matn juda uzun.")
+        return MESSAGE_TEXT
+    context.user_data["new_settings"]["message_text"] = text
+    await update.message.reply_text("Haftaning qaysi kunlari? (masalan: dushanba, juma)")
+    return DAYS
+
+
+async def days_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    days = days_from_text(update.message.text)
+    if not days:
+        await update.message.reply_text("Kunlarni to'g'ri kiriting.")
+        return DAYS
+    context.user_data["new_settings"]["days"] = days
+    await update.message.reply_text("Boshlanish vaqtini kiriting (HH:MM)")
+    return START_TIME
+
+
+async def start_time_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    t = parse_time(update.message.text)
+    if not t:
+        await update.message.reply_text("Vaqt formati noto‘g‘ri.")
+        return START_TIME
+    context.user_data["new_settings"]["start_time"] = update.message.text
+    await update.message.reply_text("Tugash vaqtini kiriting (HH:MM)")
+    return END_TIME
+
+
+async def end_time_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    t = parse_time(update.message.text)
+    if not t:
+        await update.message.reply_text("Vaqt formati noto‘g‘ri.")
+        return END_TIME
+    context.user_data["new_settings"]["end_time"] = update.message.text
+    s = context.user_data["new_settings"]
+    summary = (
+        f"Kimlarga: {s['recipients']}\n"
+        f"Mode: {s['mode']}\n"
+        f"Kunlar: {', '.join(s['days'])}\n"
+        f"Boshlanish: {s['start_time']} - {s['end_time']}\n\n"
+        f"Xabar:\n{s['message_text']}"
+    )
+    keyboard = [["Tasdiqlayman ✅"]]
+    await update.message.reply_text(summary, reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True))
+    return CONFIRM
+
+
+async def confirm_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    s = context.user_data["new_settings"]
+    s["last_broadcast"] = None
+    s["owner_active"] = True
+    s["auto_reply"] = s["message_text"]
+    save_settings(update.effective_user.id, s)
+    await update.message.reply_text("Sozlamalar saqlandi ✅", reply_markup=ReplyKeyboardRemove())
+    return ConversationHandler.END
+
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Bekor qilindi.", reply_markup=ReplyKeyboardRemove())
+    return ConversationHandler.END
+
+
+# --- Auto-reply ---
+async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user:
+        save_user(user.id, user.username, user.first_name, user.last_name)
+    data = load_data()
+    if data["settings"]:
+        first_owner = next(iter(data["settings"].values()))
+        msg = first_owner.get("auto_reply", "Rahmat! Xabaringiz qabul qilindi.")
+        await update.message.reply_text(msg)
+    else:
+        await update.message.reply_text("Bot hali sozlanmagan.")
+
+
+# --- Render uchun asosiy ishga tushirish ---
+def main():
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    conv = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={
+            RECIPIENTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, recipients_handler)],
+            MODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, mode_handler)],
+            MESSAGE_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, message_text_handler)],
+            DAYS: [MessageHandler(filters.TEXT & ~filters.COMMAND, days_handler)],
+            START_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, start_time_handler)],
+            END_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, end_time_handler)],
+            CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_handler)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-# 💬 Avtomatik javob yoqish
-@dp.callback_query(lambda c: c.data == "auto_reply")
-async def enable_auto_reply(callback: types.CallbackQuery):
-    await callback.message.answer("✅ Avtomatik javob yoqildi!\nEndi kimdir yozsa, siz nomingizdan javob yuboriladi.")
+    app.add_handler(conv)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_router))
+    logger.info("Bot ishga tushdi Render uchun ✅")
+    app.run_polling()
 
-# 📅 Belgilangan vaqt sozlash
-@dp.callback_query(lambda c: c.data == "set_time")
-async def set_time_range(callback: types.CallbackQuery):
-    await callback.message.answer("🕐 Iltimos, boshlanish vaqtini kiriting (masalan, 10:00):")
-    user_times[callback.from_user.id] = {"step": "start"}
-
-# 🕓 Foydalanuvchi vaqtlarni yuboradi
-@dp.message()
-async def get_time(message: types.Message):
-    user_id = message.from_user.id
-
-    if user_id not in user_times:
-        # Kimdir shunchaki yozsa — avtomatik javob
-        await message.answer("🤖 Sizga rahmat! Hozir sizga yordam beraman.")
-        return
-
-    step = user_times[user_id].get("step")
-
-    # Boshlanish vaqt
-    if step == "start":
-        try:
-            start_time = datetime.strptime(message.text, "%H:%M").time()
-            user_times[user_id]["start"] = start_time
-            user_times[user_id]["step"] = "end"
-            await message.answer("✅ Qabul qilindi! Endi tugash vaqtini kiriting (masalan, 17:00):")
-        except ValueError:
-            await message.answer("❌ Iltimos, vaqtni to‘g‘ri formatda kiriting (masalan, 10:00).")
-
-    # Tugash vaqt
-    elif step == "end":
-        try:
-            end_time = datetime.strptime(message.text, "%H:%M").time()
-            user_times[user_id]["end"] = end_time
-            user_times[user_id]["step"] = "done"
-            await message.answer(f"✅ Belgilandi!\n📅 Vaqt oralig‘i: {user_times[user_id]['start']} — {end_time}\n"
-                                 "Endi shu oraliqda xabar yuboriladi.")
-            asyncio.create_task(send_scheduled_messages(user_id))
-        except ValueError:
-            await message.answer("❌ Iltimos, vaqtni to‘g‘ri formatda kiriting (masalan, 17:00).")
-
-# 📤 Belgilangan vaqtda xabar yuborish
-async def send_scheduled_messages(user_id):
-    start_time = user_times[user_id]["start"]
-    end_time = user_times[user_id]["end"]
-
-    while True:
-        now = datetime.now().time()
-        if start_time <= now <= end_time:
-            await bot.send_message(user_id, "🔔 Bu avtomatik yuborilgan xabar. Siz tanlagan vaqt oralig‘idasiz.")
-        await asyncio.sleep(3600)  # Har 1 soatda yuboradi
-
-# 🚀 Botni ishga tushurish
-async def main():
-    print("🤖 Bot ishga tushdi...")
-    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
